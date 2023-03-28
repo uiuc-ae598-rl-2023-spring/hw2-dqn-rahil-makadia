@@ -1,8 +1,8 @@
 import numpy as np
-import tensorflow as tf
 import matplotlib.pyplot as plt
 import discreteaction_pendulum
 
+import itertools
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -14,19 +14,18 @@ import torch.optim as optim
 # Without replay, without target Q (i.e., the target network is reset after each step and the size of the replay memory buffer is equal to the size of each minibatch).
 
 class DQN:
-    def __init__(self, env, gamma, epsilon, epsilon_decay, epsilon_min, learning_rate, batch_size, replay_size, init_replay_size, target_update, num_hidden, num_layers):
+    def __init__(self, env, gamma, epsilon, epsilon_min, learning_rate, batch_size, replay_size, init_replay_size, target_update, savefig):
         self.env = env
         self.gamma = gamma
         self.epsilon = epsilon
-        self.epsilon_decay = epsilon_decay
         self.epsilon_min = epsilon_min
         self.learning_rate = learning_rate
         self.batch_size = batch_size
         self.replay_size = replay_size
         self.target_update = target_update
         self.target_counter = 0
+        num_hidden = 64
         self.num_hidden = num_hidden
-        self.num_layers = num_layers
 
         self.replay_buffer = []
         self.init_replay_size = init_replay_size
@@ -34,8 +33,9 @@ class DQN:
 
         self.num_actions = env.num_actions
         self.num_states = env.num_states
-
         self.build_model()
+
+        self.savefig = savefig
         return None
 
     def initialize_replay_buffer(self):
@@ -48,25 +48,6 @@ class DQN:
                 self.replay_buffer.append((s, a, r, s_, done))
                 s = s_
         return None
-
-    # def build_model(self):
-    #     # build the model here
-    #     # update the target Q network every self.target_update steps
-    #     model = tf.keras.models.Sequential()
-    #     model.add(tf.keras.layers.InputLayer(input_shape=(self.num_states,), name='input'))
-    #     model.add(tf.keras.layers.Flatten(name='flatten'))
-    #     for i in range(self.num_layers - 1):
-    #         model.add(tf.keras.layers.Dense(self.num_hidden, activation='tanh', name=f'hidden_{i}'))
-    #     model.add(tf.keras.layers.Dense(self.num_actions, activation='linear', name='output'))
-    #     model.compile(optimizer=tf.keras.optimizers.RMSprop(learning_rate=self.learning_rate), loss='mse') ## , rho=0.95, epsilon=0.01, momentum=0.95
-    #     self.model = model
-    #     # model.summary()
-    #     self.target_model = model
-    #     self.target_model.set_weights(self.model.get_weights())
-    #     # self.target_model.trainable = False
-    #     self.target_model.compile(optimizer=tf.keras.optimizers.RMSprop(learning_rate=self.learning_rate), loss='mse') # , rho=0.95, epsilon=0.01, momentum=0.95
-    #     # self.target_model.summary()
-    #     return None
 
     def build_model(self):
         model = nn.Sequential(
@@ -89,8 +70,7 @@ class DQN:
         if val < self.epsilon:
             return np.random.randint(self.num_actions)
         else:
-            # return np.argmax(self.model.predict(state, verbose=0)) # for tf.keras
-            return np.argmax(self.model(torch.from_numpy(state).float()).detach().numpy()) # for pytorch
+            return np.argmax(self.model(torch.from_numpy(state).float()).detach().numpy())
 
     def observe(self, state, action, reward, next_state, done):
         # if the replay buffer is full, replace the oldest transition
@@ -100,28 +80,6 @@ class DQN:
             self.replay_buffer.pop(0)
         self.replay_buffer.append(buffer)
         return None
-
-    # def replay(self):
-    #     # sample a minibatch from the replay buffer
-    #     # train the model on the minibatch
-    #     minibatch_idx = np.random.choice(len(self.replay_buffer), self.batch_size)
-    #     minibatch = [self.replay_buffer[i] for i in minibatch_idx]
-    #     states = np.array([x[0] for x in minibatch])
-    #     actions = np.array([x[1] for x in minibatch])
-    #     rewards = np.array([x[2] for x in minibatch])
-    #     next_states = np.array([x[3] for x in minibatch])
-    #     dones = np.array([x[4] for x in minibatch])
-    #     target = self.model.predict(states, verbose=0)
-    #     # target_model_temp = tf.keras.models.clone_model(self.model)
-    #     # target_next = target_model_temp.predict(next_states, verbose=0)
-    #     target_next = self.target_model.predict(next_states, verbose=0)
-    #     for i in range(self.batch_size):
-    #         if dones[i]:
-    #             target[i][actions[i]] = rewards[i]
-    #         else:
-    #             target[i][actions[i]] = rewards[i] + self.gamma * np.max(target_next[i])
-    #     self.model.fit(states, target, verbose=0, epochs=1)
-    #     return None
 
     def replay(self):
         batch_idx = np.random.choice(len(self.replay_buffer), self.batch_size)
@@ -144,12 +102,6 @@ class DQN:
                 param.grad.data.clamp_(-1, 1)
             self.optimizer.step()
         return None
-
-    # def check_target_update(self):
-    #     # update the target network every self.target_update steps
-    #     if self.target_counter % self.target_update == 0:
-    #         self.target_model.set_weights(self.model.get_weights())
-    #     return None
 
     def check_target_update(self):
         if self.target_counter % self.target_update == 0:
@@ -181,7 +133,7 @@ class DQN:
             self.check_target_update()
             self.epsilon = max(self.epsilon - 0.9/1e4, self.epsilon_min)
             s = s_
-            log['t'].append(log['t'][-1] + 1)
+            log['t'].append(log['t'][-1] + 1*self.env.dt)
             log['s'].append(s)
             log['a'].append(a)
             log['r'].append(r)
@@ -190,15 +142,15 @@ class DQN:
         log['G'] = G
         tau = [self.env._a_to_u(a) for a in log['a']]
         log['tau'] = tau
-        # value_func = [np.max(self.model.predict(s, verbose=0)) for s in log['s']] # for keras
-        value_func = [torch.max(self.model(torch.FloatTensor(s))).item() for s in log['s']] # for pytorch
+        value_func = [torch.max(self.model(torch.FloatTensor(s))).item() for s in log['s']]
         log['value_func'] = value_func
         self.G.append(log['G'])
         self.all_theta += log['theta']
         self.all_thetadot += log['thetadot']
         self.all_tau += log['tau']
         self.all_value_func += log['value_func']
-        self.plot(log)
+        if self.savefig:
+            self.plot(log)
         return log
 
     def run(self, num_episodes):
@@ -215,16 +167,50 @@ class DQN:
             self.episode_list.append(i+2)
         return None
 
+    def plot_contour(self):
+        figsize = 6
+        size = 500
+        theta_vec = np.linspace(-np.pi, np.pi, size)
+        thetadot_vec = np.linspace(-self.env.max_thetadot, self.env.max_thetadot, size)
+        theta_grid, thetadot_grid = np.meshgrid(theta_vec, thetadot_vec)
+        policy_arr = np.zeros((size, size))
+        value_func_arr = np.zeros((size, size))
+        for i, j in itertools.product(range(size), range(size)):
+            s = np.array([theta_grid[i, j], thetadot_grid[i, j]])
+            predict = self.model(torch.FloatTensor(s)).detach().numpy()
+            policy_arr[i, j] = self.env._a_to_u(np.argmax(predict))
+            value_func_arr[i, j] = np.max(predict)
+        plt.figure(figsize=(figsize, figsize), dpi=150)
+        plt.contourf(theta_grid, thetadot_grid, policy_arr, cmap='viridis', levels=50)
+        plt.colorbar(label=r'$\tau$')
+        plt.xlim(-np.pi, np.pi)
+        plt.ylim(-self.env.max_thetadot, self.env.max_thetadot)
+        plt.xlabel(r'$\theta$')
+        plt.ylabel(r'$\dot{\theta}$')
+        plt.title('Policy')
+        plt.savefig(f'./figures/results/ctr_policy_{self.num_episodes}_{self.target_update}.png', dpi=300, bbox_inches='tight')
+        plt.close()
+        plt.figure(figsize=(figsize, figsize), dpi=150)
+        plt.contourf(theta_grid, thetadot_grid, value_func_arr, cmap='viridis', levels=50)
+        plt.colorbar(label='Value Function')
+        plt.xlim(-np.pi, np.pi)
+        plt.ylim(-self.env.max_thetadot, self.env.max_thetadot)
+        plt.xlabel(r'$\theta$')
+        plt.ylabel(r'$\dot{\theta}$')
+        plt.title('Value Function')
+        plt.savefig(f'./figures/results/ctr_value_func_{self.num_episodes}_{self.target_update}.png', dpi=300, bbox_inches='tight')
+        plt.close()
+        return None
+
     def plot(self, log=None):
         def wrap_pi(x): return ((x + np.pi) % (2 * np.pi)) - np.pi
         def wrap_2pi(x): return x % (2 * np.pi)
         wrap_func = wrap_pi
-        log_init = log
+        if self.savefig and max(self.episode_list) == self.num_episodes:
+            self.plot_contour()
         # save animation
-        if log is None:
-            log = self._run_one_episode()
-            # policy_lambda = lambda s: np.argmax(self.model.predict(s, verbose=0)) # for keras
-            policy_lambda = lambda s: np.argmax(self.model(torch.FloatTensor(s)).detach().numpy()) # for pytorch
+        if log is not None and self.savefig and max(self.episode_list) == self.num_episodes:
+            policy_lambda = lambda s: np.argmax(self.model(torch.FloatTensor(s)).detach().numpy())
             self.env.video(policy_lambda, f'./figures/results/animation_{self.num_episodes}_{self.target_update}.gif')
         figsize = 6
 
@@ -241,7 +227,6 @@ class DQN:
         plt.title('Return vs. Episode #')
         plt.savefig(f'./figures/results/return_{self.num_episodes}_{self.target_update}.png', dpi=300, bbox_inches='tight')
         plt.close()
-
         # plot the trajectory
         log['theta'] = [wrap_func(x) for x in log['theta']]
         plt.figure(figsize=(figsize, figsize), dpi=150)
@@ -257,7 +242,6 @@ class DQN:
         plt.title('Pendulum State vs. Time')
         plt.savefig(f'./figures/results/state_{self.num_episodes}_{self.target_update}.png', dpi=300, bbox_inches='tight')
         plt.close()
-
         # plot the policy
         plt.figure(figsize=(figsize, figsize), dpi=150)
         plt.scatter(self.all_theta, self.all_thetadot, c=self.all_tau, cmap='viridis')
@@ -269,7 +253,6 @@ class DQN:
         plt.title('Policy')
         plt.savefig(f'./figures/results/policy_{self.num_episodes}_{self.target_update}.png', dpi=300, bbox_inches='tight')
         plt.close()
-
         # plot the value function
         plt.figure(figsize=(figsize, figsize), dpi=150)
         plt.scatter(self.all_theta, self.all_thetadot, c=self.all_value_func, cmap='viridis')
@@ -281,61 +264,23 @@ class DQN:
         plt.title('Value Function')
         plt.savefig(f'./figures/results/value_func_{self.num_episodes}_{self.target_update}.png', dpi=300, bbox_inches='tight')
         plt.close()
-
-        if log_init is None:
-            size = 500
-            theta_vec = np.linspace(-np.pi, np.pi, size)
-            thetadot_vec = np.linspace(-self.env.max_thetadot, self.env.max_thetadot, size)
-            theta_grid, thetadot_grid = np.meshgrid(theta_vec, thetadot_vec)
-            policy_arr = np.zeros((size, size))
-            value_func_arr = np.zeros((size, size))
-            for i in range(size):
-                for j in range(size):
-                    s = np.array([theta_grid[i, j], thetadot_grid[i, j]])
-                    # predict = self.model.predict(s, verbose=0) # for keras
-                    predict = self.model(torch.FloatTensor(s)).detach().numpy() # for pytorch
-                    policy_arr[i, j] = np.argmax(predict)
-                    value_func_arr[i, j] = np.max(predict)
-            plt.figure(figsize=(figsize, figsize), dpi=150)
-            plt.contourf(theta_grid, thetadot_grid, policy_arr, cmap='viridis')
-            plt.colorbar()
-            plt.xlim(-np.pi, np.pi)
-            plt.ylim(-self.env.max_thetadot, self.env.max_thetadot)
-            plt.xlabel(r'$\theta$')
-            plt.ylabel(r'$\dot{\theta}$')
-            plt.title('Policy')
-            plt.savefig(f'./figures/results/ctr_policy_{self.num_episodes}_{self.target_update}.png', dpi=300, bbox_inches='tight')
-            plt.close()
-            plt.figure(figsize=(figsize, figsize), dpi=150)
-            plt.contourf(theta_grid, thetadot_grid, value_func_arr, cmap='viridis')
-            plt.colorbar()
-            plt.xlim(-np.pi, np.pi)
-            plt.ylim(-self.env.max_thetadot, self.env.max_thetadot)
-            plt.xlabel(r'$\theta$')
-            plt.ylabel(r'$\dot{\theta}$')
-            plt.title('Value Function')
-            plt.savefig(f'./figures/results/ctr_value_func_{self.num_episodes}_{self.target_update}.png', dpi=300, bbox_inches='tight')
-            plt.close()
         return None
 
 def main():
     env = discreteaction_pendulum.Pendulum()
     gamma = 0.95
     epsilon = 1.0
-    epsilon_decay = 0.995
     epsilon_min = 0.1
     learning_rate = 0.00025
-    batch_size = 64
+    batch_size = 32
     replay_size = 100000
     init_replay_size = 500
     target_update = 1000
-    num_hidden = 64
-    num_layers = 2
-    dqn = DQN(env, gamma, epsilon, epsilon_decay, epsilon_min, learning_rate, batch_size, replay_size, init_replay_size, target_update, num_hidden, num_layers)
+    savefig = True
+    dqn = DQN(env, gamma, epsilon, epsilon_min, learning_rate, batch_size, replay_size, init_replay_size, target_update, savefig)
 
     num_episodes = 150
     dqn.run(num_episodes)
-    dqn.plot()
     return None
 
 if __name__ == '__main__':
