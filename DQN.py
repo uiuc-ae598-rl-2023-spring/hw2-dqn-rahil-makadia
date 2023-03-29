@@ -16,7 +16,8 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # print(device)
 
 class DQN:
-    def __init__(self, env, gamma, epsilon, epsilon_min, learning_rate, batch_size, replay_size, init_replay_size, target_update, savefig):
+    def __init__(self, gamma, epsilon, epsilon_min, learning_rate, batch_size, replay_size, init_replay_size, target_update, savefig, target_Q, replay, verbose=False):
+        env = discreteaction_pendulum.Pendulum()
         self.env = env
         self.gamma = gamma
         self.epsilon = epsilon
@@ -25,19 +26,31 @@ class DQN:
         self.batch_size = batch_size
         self.replay_size = replay_size
         self.target_update = target_update
+        self.target_Q = target_Q
         self.target_counter = 0
         num_hidden = 64
         self.num_hidden = num_hidden
-
+        self.replay = replay
         self.replay_buffer = []
         self.init_replay_size = init_replay_size
-        self.initialize_replay_buffer()
-
         self.num_actions = env.num_actions
         self.num_states = env.num_states
-        self.build_model()
-
         self.savefig = savefig
+        if not self.target_Q:
+            self.target_update = 1
+        if not self.replay:
+            self.replay_size = self.batch_size
+        if self.target_Q and self.replay:
+            self.save_dir = 'yes_target_yes_replay'
+        elif self.target_Q:
+            self.save_dir = 'yes_target_no_replay'
+        elif self.replay:
+            self.save_dir = 'no_target_yes_replay'
+        else:
+            self.save_dir = 'no_target_no_replay'
+        self.verbose = verbose
+        self.initialize_replay_buffer()
+        self.build_model()
         return None
 
     def initialize_replay_buffer(self):
@@ -84,7 +97,7 @@ class DQN:
         self.replay_buffer.append(buffer)
         return None
 
-    def replay(self):
+    def replay_step(self):
         batch_idx = np.random.choice(len(self.replay_buffer), self.batch_size)
         batch = [self.replay_buffer[i] for i in batch_idx]
         states = np.array([x[0] for x in batch])
@@ -108,7 +121,7 @@ class DQN:
 
     def check_target_update(self):
         if self.target_counter % self.target_update == 0:
-            print(f'updating target model at step {self.target_counter}')
+            if self.verbose: print(f'updating target model at step {self.target_counter}')
             self.target_model.load_state_dict(self.model.state_dict())
         return None
 
@@ -129,7 +142,7 @@ class DQN:
             a = self.act(s)
             s_, r, done = self.env.step(a)
             self.observe(s, a, r, s_, done)
-            self.replay()
+            self.replay_step()
             self.target_counter += 1
             G += r*self.gamma**iter_count
             iter_count += 1
@@ -166,7 +179,7 @@ class DQN:
         self.all_value_func = []
         for i in range(num_episodes):
             log = self._run_one_episode()
-            print(f'Episode {i+1}, Return: {log["G"]}, Epsilon: {self.epsilon}')
+            if self.verbose: print(f'Episode {i+1}, Return: {log["G"]}, Epsilon: {self.epsilon}')
             self.episode_list.append(i+2)
         return None
 
@@ -191,7 +204,7 @@ class DQN:
         plt.xlabel(r'$\theta$')
         plt.ylabel(r'$\dot{\theta}$')
         plt.title('Policy')
-        plt.savefig(f'./figures/results/ctr_policy_{self.num_episodes}_{self.target_update}.png', dpi=300, bbox_inches='tight')
+        plt.savefig(f'./figures/{self.save_dir}/ctr_policy_{self.num_episodes}_{self.target_update}.png', dpi=300, bbox_inches='tight')
         plt.close()
         plt.figure(figsize=(figsize, figsize), dpi=150)
         plt.contourf(theta_grid, thetadot_grid, value_func_arr, cmap='viridis', levels=50)
@@ -201,7 +214,7 @@ class DQN:
         plt.xlabel(r'$\theta$')
         plt.ylabel(r'$\dot{\theta}$')
         plt.title('Value Function')
-        plt.savefig(f'./figures/results/ctr_value_func_{self.num_episodes}_{self.target_update}.png', dpi=300, bbox_inches='tight')
+        plt.savefig(f'./figures/{self.save_dir}/ctr_value_func_{self.num_episodes}_{self.target_update}.png', dpi=300, bbox_inches='tight')
         plt.close()
         return None
 
@@ -214,9 +227,8 @@ class DQN:
         # save animation
         if log is not None and self.savefig and max(self.episode_list) == self.num_episodes:
             policy_lambda = lambda s: np.argmax(self.model(torch.FloatTensor(s)).detach().numpy())
-            self.env.video(policy_lambda, f'./figures/results/animation_{self.num_episodes}_{self.target_update}.gif')
+            self.env.video(policy_lambda, f'./figures/{self.save_dir}/animation_{self.num_episodes}_{self.target_update}.gif', writer='pillow')
         figsize = 6
-
         # plot the return and n-episode moving average
         n_avg = 10
         moving_avg = np.convolve(self.G, np.ones((n_avg,))/n_avg, mode='valid')
@@ -228,7 +240,7 @@ class DQN:
         plt.ylabel('Return')
         plt.legend()
         plt.title('Return vs. Episode #')
-        plt.savefig(f'./figures/results/return_{self.num_episodes}_{self.target_update}.png', dpi=300, bbox_inches='tight')
+        plt.savefig(f'./figures/{self.save_dir}/return_{self.num_episodes}_{self.target_update}.png', dpi=300, bbox_inches='tight')
         plt.close()
         # plot the trajectory
         log['theta'] = [wrap_func(x) for x in log['theta']]
@@ -243,28 +255,28 @@ class DQN:
         plt.ylabel('theta / thetadot')
         plt.legend()
         plt.title('Pendulum State vs. Time')
-        plt.savefig(f'./figures/results/state_{self.num_episodes}_{self.target_update}.png', dpi=300, bbox_inches='tight')
+        plt.savefig(f'./figures/{self.save_dir}/state_{self.num_episodes}_{self.target_update}.png', dpi=300, bbox_inches='tight')
         plt.close()
         # plot the policy
         plt.figure(figsize=(figsize, figsize), dpi=150)
         plt.scatter(self.all_theta, self.all_thetadot, c=self.all_tau, cmap='viridis')
-        plt.colorbar()
+        plt.colorbar(label=r'$\tau$')
         plt.xlim(-np.pi, np.pi)
         plt.ylim(-self.env.max_thetadot, self.env.max_thetadot)
         plt.xlabel(r'$\theta$')
         plt.ylabel(r'$\dot{\theta}$')
         plt.title('Policy')
-        plt.savefig(f'./figures/results/policy_{self.num_episodes}_{self.target_update}.png', dpi=300, bbox_inches='tight')
+        plt.savefig(f'./figures/{self.save_dir}/policy_{self.num_episodes}_{self.target_update}.png', dpi=300, bbox_inches='tight')
         plt.close()
         # plot the value function
         plt.figure(figsize=(figsize, figsize), dpi=150)
         plt.scatter(self.all_theta, self.all_thetadot, c=self.all_value_func, cmap='viridis')
-        plt.colorbar()
+        plt.colorbar(label='Value Function')
         plt.xlim(-np.pi, np.pi)
         plt.ylim(-self.env.max_thetadot, self.env.max_thetadot)
         plt.xlabel(r'$\theta$')
         plt.ylabel(r'$\dot{\theta}$')
         plt.title('Value Function')
-        plt.savefig(f'./figures/results/value_func_{self.num_episodes}_{self.target_update}.png', dpi=300, bbox_inches='tight')
+        plt.savefig(f'./figures/{self.save_dir}/value_func_{self.num_episodes}_{self.target_update}.png', dpi=300, bbox_inches='tight')
         plt.close()
         return None
