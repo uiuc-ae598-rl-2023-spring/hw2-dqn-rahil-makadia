@@ -13,6 +13,7 @@ import torch.optim as optim
 # Without replay, with target Q (i.e., the size of the replay memory buffer is equal to the size of each minibatch).
 # Without replay, without target Q (i.e., the target network is reset after each step and the size of the replay memory buffer is equal to the size of each minibatch).
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# print(device)
 
 class DQN:
     def __init__(self, env, gamma, epsilon, epsilon_min, learning_rate, batch_size, replay_size, init_replay_size, target_update, savefig):
@@ -63,7 +64,7 @@ class DQN:
         self.target_model = model
         self.target_model.load_state_dict(self.model.state_dict())
         
-        self.optimizer = optim.RMSprop(self.model.parameters(), lr=self.learning_rate) # , alpha=0.95, eps=0.01, momentum=0.95
+        self.optimizer = optim.RMSprop(self.model.parameters(), lr=self.learning_rate)
         self.loss_fn = nn.MSELoss()
         return None
 
