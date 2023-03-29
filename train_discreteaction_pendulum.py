@@ -16,7 +16,7 @@ def main():
 
     start = time.time()
     target_Q = True
-    replay = True    
+    replay = True
     dqn_yes_target_yes_replay = DQN(gamma, epsilon, epsilon_min, learning_rate, batch_size, replay_size, init_replay_size, target_update, savefig, target_Q, replay, verbose)
     dqn_yes_target_yes_replay.run(num_episodes)
     end = time.time()
