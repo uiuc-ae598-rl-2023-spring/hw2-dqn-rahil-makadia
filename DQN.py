@@ -49,7 +49,8 @@ class DQN:
         else:
             self.save_dir = 'no_target_no_replay'
         self.verbose = verbose
-        self.initialize_replay_buffer()
+        if self.replay:
+            self.initialize_replay_buffer()
         self.build_model()
         return None
 
